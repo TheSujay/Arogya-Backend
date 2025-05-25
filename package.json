@@ -4,6 +4,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "build": "echo 'No build step defined'",
     "start": "node server.js",
     "server": "nodemon server.js"
   },
