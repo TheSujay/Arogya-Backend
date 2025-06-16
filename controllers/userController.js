@@ -142,107 +142,133 @@ const bookAppointment = async (req, res) => {
     const userId = req.userId;
     const { docId, slotDate, slotTime } = req.body;
 
+    // Fetch doctor and user
     const doctor = await doctorModel.findById(docId);
+    const user = await userModel.findById(userId);
+
     if (!doctor) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Doctor not found" });
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
     if (!doctor.available) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Doctor not available" });
+      return res.status(400).json({ success: false, message: "Doctor not available" });
     }
 
-    // Ensure the slot is not already booked by checking the Appointment collection
+    // Prevent double booking
     const existingAppointment = await appointmentModel.findOne({
       docId,
       slotDate,
       slotTime,
+      cancelled: { $ne: true },
     });
 
     if (existingAppointment) {
-      return res
-        .status(400)
-        .json({ success: false, message: "This slot is already booked" });
+      return res.status(400).json({ success: false, message: "This slot is already booked" });
     }
 
-    // Proceed to create the appointment
-    const user = await userModel.findById(userId).select("-password");
-
-    const appointmentData = {
-      userId,
-      docId,
-      userData: user,
-      docData: {
-        name: doctor.name,
-        image: doctor.image,
-        speciality: doctor.speciality,
-        fees: doctor.fees,
-        experience: doctor.experience,
-      },
-      amount: doctor.fees,
-      slotTime,
-      slotDate,
-      date: Date.now(),
-    };
-
-    const newAppointment = new appointmentModel(appointmentData);
-    await newAppointment.save();
-
-    // Optional: update slot tracking if you're also tracking slots in doctor model
+    // Ensure doctor's slots_booked is in proper format
     if (!doctor.slots_booked) doctor.slots_booked = {};
-    if (!doctor.slots_booked[slotDate]) doctor.slots_booked[slotDate] = [];
+    if (!Array.isArray(doctor.slots_booked[slotDate])) {
+      doctor.slots_booked[slotDate] = [];
+    }
     doctor.slots_booked[slotDate].push(slotTime);
     await doctor.save();
 
-    res
-      .status(200)
-      .json({ success: true, message: "Appointment booked successfully" });
+    // Structure userData and docData to match your required format
+    const appointment = await appointmentModel.create({
+      userId,
+      docId,
+      slotDate,
+      slotTime,
+      cancelled: false,
+      isCompleted: false,
+      payment: false,
+      date: Date.now(), // timestamp format
+      amount: doctor.fees,
+      userData: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        image: user.image || "",
+        phone: user.phone,
+        address: {
+          line1: user.address?.line1 || "",
+          line2: user.address?.line2 || ""
+        },
+        gender: user.gender || "",
+        dob: user.dob || "",
+        __v: 0 // optional - depends if your schema has it
+      },
+      docData: {
+        name: doctor.name,
+        image: doctor.image || "",
+        speciality: doctor.speciality,
+        fees: doctor.fees,
+        experience: doctor.experience
+      },
+    });
+
+    return res.json({ success: true, message: "Appointment Booked Successfully", appointment });
+
   } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error: " + error.message });
+    console.error("Booking Error:", error.message);
+    return res.status(500).json({ success: false, message: "Server Error: " + error.message });
   }
 };
+
 
 // API to cancel appointment
 const cancelAppointment = async (req, res) => {
   try {
     const userId = req.userId;
     const { appointmentId } = req.body;
-    const appointmentData = await appointmentModel.findById(appointmentId);
 
-    // verify appointment user
-    if (appointmentData.userId !== userId) {
-      return res.json({ success: false, message: "Unauthorized action" });
+    const appointmentData = await appointmentModel.findById(appointmentId);
+    if (!appointmentData) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
     }
 
-    await appointmentModel.findByIdAndUpdate(appointmentId, {
-      cancelled: true,
-    });
+    await appointmentModel.findByIdAndUpdate(appointmentId, { cancelled: true });
 
-    // releasing doctor slot
     const { docId, slotDate, slotTime } = appointmentData;
 
-    const doctorData = await doctorModel.findById(docId);
+    const doctor = await doctorModel.findById(docId);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
 
-    let slots_booked = doctorData.slots_booked;
+    // 🔍 Add this debug block here
+    console.log("📆 slotDate received:", slotDate);
+    console.log("📦 slots_booked keys:", Object.keys(doctor.slots_booked || {}));
+    console.log("🕓 doctor.slots_booked[slotDate]:", doctor.slots_booked?.[slotDate]);
 
-    slots_booked[slotDate] = slots_booked[slotDate].filter(
-      (e) => e !== slotTime
-    );
+    // This is the line that causes the error if doctor.slots_booked[slotDate] is undefined
+    let slotArray = doctor.slots_booked[slotDate];
+    if (!Array.isArray(slotArray)) {
+      console.warn("⚠️ slots_booked[slotDate] is not an array:", slotArray);
+      slotArray = [];
+    }
 
-    await doctorModel.findByIdAndUpdate(docId, { slots_booked });
+    doctor.slots_booked[slotDate] = slotArray.filter((s) => s !== slotTime);
 
-    res.json({ success: true, message: "Appointment Cancelled" });
+    await doctor.save();
+
+    return res.json({ success: true, message: "Appointment Cancelled Successfully" });
   } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: error.message });
+    console.error("❌ Cancel Error:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+
+
+
+
+
 
 // API to get user appointments for frontend my-appointments page
 const listAppointment = async (req, res) => {
