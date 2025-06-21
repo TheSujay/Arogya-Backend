@@ -15,6 +15,9 @@ import streamifier from "streamifier";
 
 // Ensure you have a logo image in the correct path
 
+chromium.setHeadlessMode = true;
+chromium.setGraphicsMode = false;
+
 // ✅ Doctor Login
 const loginDoctor = async (req, res) => {
   try {
@@ -247,11 +250,11 @@ export const generateAndUploadReport = async (req, res) => {
 
     // Generate PDF using Puppeteer
     const browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath,
-      headless: chromium.headless,
-      timeout: 30000, 
-    });
+  args: chromium.args,
+  executablePath: await chromium.executablePath(),
+  headless: chromium.headless,
+  timeout: 30000,
+});
     let pdfBuffer;
 try {
   const page = await browser.newPage();
