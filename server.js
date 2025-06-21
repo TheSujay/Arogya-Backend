@@ -23,7 +23,10 @@ connectCloudinary()
 
 // middlewares
 
-app.use(cors())
+app.use(cors({
+  origin: ["http://localhost:5174", "https://tourmaline-froyo-923d26.netlify.app/doctor-list"], // ✅ Add your frontend URL here
+  credentials: true
+}));
 app.use(express.json());
 
 // api endpoints

@@ -6,13 +6,13 @@ import sendEmail from "../utils/sendEmail.js";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fs from "fs-extra";
 import path from "path";
-import puppeteer from 'puppeteer';
-import handlebars from 'handlebars';
+import puppeteer from "puppeteer";
+import handlebars from "handlebars";
 import mongoose from "mongoose";
 import { cloudinary, connectCloudinary } from "../config/cloudinary.js";
 import streamifier from "streamifier";
 
- // Ensure you have a logo image in the correct path
+// Ensure you have a logo image in the correct path
 
 // ✅ Doctor Login
 const loginDoctor = async (req, res) => {
@@ -151,7 +151,6 @@ const appointmentConfirm = async (req, res) => {
       });
     }
     // ✅ Format date and time here
-    
 
     // Format date as "date-MMM-year" (e.g., 19-Jun-2025)
     let formattedDate = "Not provided";
@@ -159,15 +158,26 @@ const appointmentConfirm = async (req, res) => {
       // Replace underscores with hyphens to handle "19_06_2025" format
       const dateStr = appointment.slotDate.replace(/_/g, "-");
       const [day, month, year] = dateStr.split("-");
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const months = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
       const monthShort = months[parseInt(month, 10) - 1];
       formattedDate = `${day}-${monthShort}-${year}`;
     }
 
-// Format slotTime → if already "11:30", you can just append AM/PM or leave it
-const formattedTime = appointment.slotTime || "Not provided";
-
-
+    // Format slotTime → if already "11:30", you can just append AM/PM or leave it
+    const formattedTime = appointment.slotTime || "Not provided";
 
     const userName = appointment.userData.name || "User";
     // ✅ Send confirmation email
@@ -193,24 +203,29 @@ const formattedTime = appointment.slotTime || "Not provided";
   }
 };
 
+// 🔧 CREATE A DYNAMIC PDF REPORT (text-based for now)
 
-
-    // 🔧 CREATE A DYNAMIC PDF REPORT (text-based for now)
-   
-
- export const generateAndUploadReport = async (req, res) => {
+export const generateAndUploadReport = async (req, res) => {
   try {
     const { appointmentId, diagnosis, prescription } = req.body;
 
     if (!appointmentId || !diagnosis || !prescription) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing fields" });
     }
 
     const appointment = await appointmentModel.findById(appointmentId);
-    if (!appointment) return res.status(404).json({ success: false, message: "Appointment not found" });
+    if (!appointment)
+      return res
+        .status(404)
+        .json({ success: false, message: "Appointment not found" });
 
     const doctor = await doctorModel.findById(appointment.docId);
-    if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+    if (!doctor)
+      return res
+        .status(404)
+        .json({ success: false, message: "Doctor not found" });
 
     // Compile HTML with Handlebars
     const templatePath = path.resolve("templates", "template.html");
@@ -222,7 +237,7 @@ const formattedTime = appointment.slotTime || "Not provided";
       dob: appointment.userData.dob || "N/A",
       doctorName: doctor.name,
       speciality: doctor.speciality,
-      signatureUrl: `/uploads/signatures/${doctor._id}-signature.png`,
+      signatureUrl: `/uploads/signatures/${doctor._id}-signature.png` || "N/A",
       diagnosis,
       prescription,
       date: appointment.slotDate || "N/A",
@@ -230,7 +245,10 @@ const formattedTime = appointment.slotTime || "Not provided";
     });
 
     // Generate PDF using Puppeteer
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0" });
 
@@ -273,18 +291,13 @@ const formattedTime = appointment.slotTime || "Not provided";
       message: "✅ Report generated and uploaded successfully",
       file: result.secure_url,
     });
-
   } catch (error) {
     console.error("❌ Report generation failed:", error);
-    res.status(500).json({ success: false, message: "Report generation failed" });
+    res
+      .status(500)
+      .json({ success: false, message: "Report generation failed" });
   }
 };
-
-
-
-
-
-
 
 export const getReport = async (req, res) => {
   try {
@@ -310,8 +323,6 @@ export const getReport = async (req, res) => {
   }
 };
 
-
-
 // ✅ Doctor List
 const doctorList = async (req, res) => {
   try {
@@ -324,23 +335,23 @@ const doctorList = async (req, res) => {
 };
 
 // Smart Search Function
- const searchAppointments = async (req, res) => {
+const searchAppointments = async (req, res) => {
   try {
     const { query } = req.query;
 
-    if (!query) return res.status(400).json({ message: "Search query is required." });
+    if (!query)
+      return res.status(400).json({ message: "Search query is required." });
 
     const searchRegex = new RegExp(query, "i"); // Case-insensitive regex
 
     const appointments = await appointmentModel.find({
-      $or: [
-        { "userData.name": searchRegex },
-        { "userData._id": query }
-      ]
+      $or: [{ "userData.name": searchRegex }, { "userData._id": query }],
     });
 
     if (appointments.length === 0) {
-      return res.status(404).json({ message: "No matching appointments found." });
+      return res
+        .status(404)
+        .json({ message: "No matching appointments found." });
     }
 
     res.status(200).json(appointments);
@@ -349,9 +360,6 @@ const doctorList = async (req, res) => {
     res.status(500).json({ message: "Internal server error." });
   }
 };
-
-
-
 
 // ✅ Change Doctor Availability
 const changeAvailablity = async (req, res) => {
@@ -394,8 +402,6 @@ const updateDoctorProfile = async (req, res) => {
     res.json({ success: false, message: error.message });
   }
 };
-
-
 
 // ✅ Doctor Dashboard
 const doctorDashboard = async (req, res) => {
@@ -442,5 +448,4 @@ export {
   bookAppointment,
   appointmentConfirm,
   searchAppointments,
-  
 };
