@@ -24,9 +24,13 @@ connectCloudinary()
 // middlewares
 
 app.use(cors({
-  origin: ["http://localhost:5174", "https://tourmaline-froyo-923d26.netlify.app"],
-, // ✅ Add your frontend URL here
-  credentials: true
+  origin: [
+    "http://localhost:5174",
+    "https://tourmaline-froyo-923d26.netlify.app"
+  ],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
