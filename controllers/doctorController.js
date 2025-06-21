@@ -6,7 +6,8 @@ import sendEmail from "../utils/sendEmail.js";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fs from "fs-extra";
 import path from "path";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import handlebars from "handlebars";
 import mongoose from "mongoose";
 import { cloudinary, connectCloudinary } from "../config/cloudinary.js";
@@ -246,14 +247,23 @@ export const generateAndUploadReport = async (req, res) => {
 
     // Generate PDF using Puppeteer
     const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: chromium.args,
+      executablePath: await chromium.executablePath,
+      headless: chromium.headless,
+      timeout: 30000, 
     });
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    let pdfBuffer;
+try {
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: "networkidle0" });
+  pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
+} catch (err) {
+  console.error("PDF generation failed", err);
+  await browser?.close();
+  return res.status(500).json({ success: false, message: "PDF generation failed" });
+}
 
-    const pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
-    await browser.close();
+await browser.close();
 
     // Upload PDF buffer to Cloudinary
     connectCloudinary();
@@ -309,39 +319,40 @@ export const getReport = async (req, res) => {
     }
 
     // ✅ Absolute file path
-    const filePath = path.join(process.cwd(), appointment.reportUrl);
+    if (!appointment || !appointment.reportUrl) {
+  return res.status(404).send("Report not available");
+}
 
-    // ✅ Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send("Report file not found on server");
-    }
-
-    res.download(filePath); // trigger download in frontend
+res.redirect(appointment.reportUrl); // or send as JSON if needed
+ // trigger download in frontend
   } catch (err) {
     console.error("❌ Report Download Error:", err);
     res.status(500).send("Download failed");
   }
 };
 
-
 // ✅ Upload Doctor Signature
-
 
 export const uploadDoctorSignature = async (req, res) => {
   try {
-    
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "No file uploaded" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
     }
 
     const doctorId = req.doctorId || req.body.docId;
     if (!doctorId) {
-      return res.status(400).json({ success: false, message: "Missing doctor ID" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing doctor ID" });
     }
 
     const doctor = await doctorModel.findById(doctorId);
     if (!doctor) {
-      return res.status(404).json({ success: false, message: "Doctor not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Doctor not found" });
     }
 
     // 🔁 Upload file to Cloudinary
@@ -352,7 +363,7 @@ export const uploadDoctorSignature = async (req, res) => {
 
     // ✅ Save Cloudinary secure URL to DB
     doctor.signature = result.secure_url;
-    doctor.signatureUploadedAt = new Date(); 
+    doctor.signatureUploadedAt = new Date();
     await doctor.save();
 
     return res.status(200).json({
@@ -360,18 +371,13 @@ export const uploadDoctorSignature = async (req, res) => {
       message: "Signature uploaded to Cloudinary successfully",
       signatureUrl: result.secure_url,
     });
-
   } catch (error) {
     console.error("❌ Cloudinary Upload Error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
   }
 };
-
-
-
-
-
-
 
 // ✅ Doctor List
 const doctorList = async (req, res) => {
