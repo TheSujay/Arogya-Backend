@@ -237,7 +237,7 @@ export const generateAndUploadReport = async (req, res) => {
       dob: appointment.userData.dob || "N/A",
       doctorName: doctor.name,
       speciality: doctor.speciality,
-      signatureUrl: `/uploads/signatures/${doctor._id}-signature.png` || "N/A",
+      signatureUrl: doctor.signature || "N/A",
       diagnosis,
       prescription,
       date: appointment.slotDate || "N/A",
@@ -322,6 +322,56 @@ export const getReport = async (req, res) => {
     res.status(500).send("Download failed");
   }
 };
+
+
+// ✅ Upload Doctor Signature
+
+
+export const uploadDoctorSignature = async (req, res) => {
+  try {
+    
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const doctorId = req.doctorId || req.body.docId;
+    if (!doctorId) {
+      return res.status(400).json({ success: false, message: "Missing doctor ID" });
+    }
+
+    const doctor = await doctorModel.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
+
+    // 🔁 Upload file to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "doctor-signatures",
+      public_id: `signature-${doctorId}-${Date.now()}`,
+    });
+
+    // ✅ Save Cloudinary secure URL to DB
+    doctor.signature = result.secure_url;
+    doctor.signatureUploadedAt = new Date(); 
+    await doctor.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Signature uploaded to Cloudinary successfully",
+      signatureUrl: result.secure_url,
+    });
+
+  } catch (error) {
+    console.error("❌ Cloudinary Upload Error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+
+
+
+
+
 
 // ✅ Doctor List
 const doctorList = async (req, res) => {

@@ -17,7 +17,10 @@ import authDoctor from "../middleware/authDoctor.js";
 import {
   generateAndUploadReport,
   getReport,
+  uploadDoctorSignature,
 } from "../controllers/doctorController.js";
+import upload from "../middleware/multer.js"; // multer
+
 const doctorRouter = express.Router();
 
 doctorRouter.post("/login", loginDoctor);
@@ -33,6 +36,11 @@ doctorRouter.post("/confirm-appointment", authDoctor, appointmentConfirm); // âœ
 doctorRouter.post("/generate-report", generateAndUploadReport);
 doctorRouter.get("/get-report/:appointmentId", getReport);
 doctorRouter.get("/search-appointments", searchAppointments);
+doctorRouter.post("/upload-signature", authDoctor, upload.single("signature"), uploadDoctorSignature);
+
+
+
+
 
 
 

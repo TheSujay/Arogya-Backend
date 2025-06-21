@@ -26,13 +26,17 @@ connectCloudinary()
 app.use(cors({
   origin: [
     "http://localhost:5174",
-    "https://tourmaline-froyo-923d26.netlify.app"
+    "https://tourmaline-froyo-923d26.netlify.app",
+    "https://arogyaforall.netlify.app",
+    "http://localhost:5173"
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "dToken","aToken",],
+  allowedHeaders: ["Content-Type", "Authorization", "dtoken","atoken",],
 }));
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // api endpoints
 app.use("/api/user", userRouter)

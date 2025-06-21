@@ -25,20 +25,29 @@ const doctorSchema = new mongoose.Schema(
 
     // ✅ Booked slots structure: { "24_5_2025": ["09:00 AM", "09:30 AM"] }
     slots_booked: {
-    type: Map,
-    of: [String], // each date will map to an array of slot strings
-    default: {},
-},
- // Ensure a new object for each document
+      type: Map,
+      of: [String], // each date will map to an array of slot strings
+      default: {},
+    },
+    // Ensure a new object for each document
     // ✅ Address structure
 
     address: { type: Object, required: true },
     date: { type: Number, required: true },
+    
+    signature: {
+  type: String
+},
+signatureUploadedAt: {
+  type: Date
+},
+
   },
   {
     minimize: false, // ensures empty objects are saved as {}
   }
 );
 
-const doctorModel = mongoose.models.doctor || mongoose.model("doctor", doctorSchema);
+const doctorModel =
+  mongoose.models.doctor || mongoose.model("doctor", doctorSchema);
 export default doctorModel;
