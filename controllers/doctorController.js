@@ -18,6 +18,9 @@ import streamifier from "streamifier";
 chromium.setHeadlessMode = true;
 chromium.setGraphicsMode = false;
 
+
+const isLocal = process.env.NODE_ENV !== "production"; 
+
 // ✅ Doctor Login
 const loginDoctor = async (req, res) => {
   try {
@@ -214,28 +217,23 @@ export const generateAndUploadReport = async (req, res) => {
     const { appointmentId, diagnosis, prescription } = req.body;
 
     if (!appointmentId || !diagnosis || !prescription) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing fields" });
+      return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
     const appointment = await appointmentModel.findById(appointmentId);
-    if (!appointment)
-      return res
-        .status(404)
-        .json({ success: false, message: "Appointment not found" });
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
 
     const doctor = await doctorModel.findById(appointment.docId);
-    if (!doctor)
-      return res
-        .status(404)
-        .json({ success: false, message: "Doctor not found" });
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
 
-    // Compile HTML with Handlebars
+    // Compile HTML
     const templatePath = path.resolve("templates", "template.html");
     const htmlTemplate = fs.readFileSync(templatePath, "utf8");
     const compile = handlebars.compile(htmlTemplate);
-
     const html = compile({
       patientName: appointment.userData.name,
       dob: appointment.userData.dob || "N/A",
@@ -248,36 +246,48 @@ export const generateAndUploadReport = async (req, res) => {
       time: appointment.slotTime || "N/A",
     });
 
-    // Generate PDF using Puppeteer
+    // Launch Puppeteer (Edge path for local)
     const browser = await puppeteer.launch({
-  args: chromium.args,
-  executablePath: await chromium.executablePath(),
-  headless: chromium.headless,
-  timeout: 30000,
-});
+      executablePath: isLocal
+        ? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+        : await chromium.executablePath(),
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
     let pdfBuffer;
-try {
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: "networkidle0" });
-  pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
-} catch (err) {
-  console.error("PDF generation failed", err);
-  await browser?.close();
-  return res.status(500).json({ success: false, message: "PDF generation failed" });
-}
 
-await browser.close();
+    try {
+      const page = await browser.newPage();
 
-    // Upload PDF buffer to Cloudinary
+      // Load content with minimal wait
+      await page.setContent(html, {
+        waitUntil: "load",
+        timeout: 0, // Disable timeout to avoid race condition
+      });
+
+      pdfBuffer = await page.pdf({
+        format: "A4",
+        printBackground: true,
+      });
+    } catch (err) {
+      console.error("⚠️ PDF generation failed:", err);
+      await browser.close();
+      return res.status(500).json({ success: false, message: "PDF generation failed" });
+    }
+
+    await browser.close();
+
+    // Upload to Cloudinary
     connectCloudinary();
 
-    const uploadFromBuffer = (buffer) => {
-      return new Promise((resolve, reject) => {
+    const uploadFromBuffer = (buffer) =>
+      new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           {
-            resource_type: "raw", // "raw" for PDF, ZIP, etc.
+            resource_type: "raw",
             type: "upload",
-            folder: "reports", // Cloudinary folder
+            folder: "reports",
             public_id: `report-${appointmentId}`,
             format: "pdf",
           },
@@ -289,11 +299,10 @@ await browser.close();
 
         streamifier.createReadStream(buffer).pipe(stream);
       });
-    };
 
     const result = await uploadFromBuffer(pdfBuffer);
 
-    // Save Cloudinary URL to appointment
+    // Save and respond
     appointment.reportUrl = result.secure_url;
     appointment.diagnosis = diagnosis;
     appointment.prescription = prescription;
@@ -306,11 +315,10 @@ await browser.close();
     });
   } catch (error) {
     console.error("❌ Report generation failed:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Report generation failed" });
+    res.status(500).json({ success: false, message: "Report generation failed" });
   }
 };
+
 
 export const getReport = async (req, res) => {
   try {
