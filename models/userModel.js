@@ -9,7 +9,25 @@ const userSchema = new mongoose.Schema({
     gender: { type: String, default: 'Not Selected' },
     dob: { type: String, default: 'Not Selected' },
     password: { type: String, required: true },
-})
+    googleId: { type: String },
+  otp: String,
+  otpExpiry: Date,
+    
+    twoFactorEnabled: { type: Boolean, default: false },
+
+  // 👇 ADD THIS (array of login attempts):
+  loginHistory: [
+    {
+      timestamp: { type: Date, default: Date.now },
+      ip: String,
+      userAgent: String,
+      success: Boolean,
+    },
+  ],
+},{
+  timestamps: true, // <-- This adds createdAt and updatedAt automatically
+});
+
 
 const userModel = mongoose.models.user || mongoose.model("user", userSchema);
 export default userModel;

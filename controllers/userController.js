@@ -7,90 +7,235 @@ import appointmentModel from "../models/appointmentModel.js";
 import { v2 as cloudinary } from "cloudinary";
 import stripe from "stripe";
 import razorpay from "razorpay";
+  import { v4 as uuidv4 } from "uuid";
+import sendEmail  from "../utils/sendEmail.js";
+import { OAuth2Client } from "google-auth-library";
+import admin from "../utils/firebaseAdmin.js"
 
-// Gateway Initialize
-const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY);
-const razorpayInstance = new razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
 
-// API to register user
-const registerUser = async (req, res) => {
+
+const { UAParser } = await import('ua-parser-js'); // ✅ Dynamic import with named export
+
+
+
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const OTP_EXPIRY = 15 * 60 * 1000; // 15 minutes  
+
+let stripeInstance = null;
+let razorpayInstance = null;
+
+try {
+  if (process.env.STRIPE_SECRET_KEY) {
+    const stripeImport = await import("stripe");
+    stripeInstance = new stripeImport.default(process.env.STRIPE_SECRET_KEY);
+    console.log("✅ Stripe initialized");
+  } else {
+    console.warn("⚠️ STRIPE_SECRET_KEY not found. Stripe disabled.");
+  }
+} catch (err) {
+  console.error("❌ Stripe init error:", err.message);
+}
+
+try {
+  if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+    const razorpayImport = await import("razorpay");
+    razorpayInstance = new razorpayImport.default({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+    console.log("✅ Razorpay initialized");
+  } else {
+    console.warn("⚠️ Razorpay keys missing. Razorpay disabled.");
+  }
+} catch (err) {
+  console.error("❌ Razorpay init error:", err.message);
+}
+const signToken = (userId) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+};
+// 1. Register + send email OTP
+export const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    if (!name || !email || !password)
+      return res.json({ success: false, message: "Missing details" });
 
-    // checking for all data to register user
-    if (!name || !email || !password) {
-      return res.json({ success: false, message: "Missing Details" });
-    }
+    if (!validator.isEmail(email))
+      return res.json({ success: false, message: "Invalid email" });
+    if (password.length < 8)
+      return res.json({ success: false, message: "Weak password" });
 
-    // validating email format
-    if (!validator.isEmail(email)) {
-      return res.json({
-        success: false,
-        message: "Please enter a valid email",
-      });
-    }
+    const exists = await userModel.findOne({ email });
+    if (exists)
+      return res.json({ success: false, message: "Email already used" });
 
-    // validating strong password
-    if (password.length < 8) {
-      return res.json({
-        success: false,
-        message: "Please enter a strong password",
-      });
-    }
+    const hashed = await bcrypt.hash(password, 10);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = Date.now() + OTP_EXPIRY;
 
-    // hashing user password
-    const salt = await bcrypt.genSalt(10); // the more no. round the more time it will take
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const newUser = await userModel.create({
+      name, email, password: hashed, otp, otpExpiry
+    });
 
-    const userData = {
-      name,
-      email,
-      password: hashedPassword,
-    };
-
-    const newUser = new userModel(userData);
-    const user = await newUser.save();
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
-
-    res.json({ success: true, token });
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: error.message });
+    await sendEmail(email, "Verify your account", `<p>Your OTP is <b>${otp}</b></p>`);
+    return res.json({ success: true, message: "OTP sent to email" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// API to login user
-const loginUser = async (req, res) => {
+// 2. Validate OTP and send token
+export const verifyOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and OTP are required" });
+    }
+
+    const user = await userModel.findOne({ email }); // ✅ FIXED HERE
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const now = Date.now();
+    const expiry = new Date(user.otpExpiry).getTime(); // in case stored as Date
+
+    if (user.otp !== otp || now > expiry) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid or expired OTP" });
+    }
+
+    user.otp = null;
+    user.otpExpiry = null;
+    await user.save();
+
+    const token = signToken(user._id);
+
+    return res.status(200).json({ success: true, token });
+  } catch (err) {
+    console.error("Verify OTP Error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+// 3. Password login
+export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await userModel.findOne({ email });
+    if (!user) return res.json({ success: false, message: "User not found" });
 
-    if (!user) {
-      return res.json({ success: false, message: "User does not exist" });
-    }
+    const match = await bcrypt.compare(password, user.password);
+    user.loginHistory = user.loginHistory.slice(-9); // keep last 10
+    user.loginHistory.push({
+      ip: req.ip || req.headers["x-forwarded-for"] || "unknown",
+      userAgent: req.get("User-Agent") || "unknown",
+      success: match
+    });
+    await user.save();
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    if (!match)
+      return res.json({ success: false, message: "Invalid credentials" });
 
-    if (isMatch) {
-      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
-      res.json({ success: true, token });
-    } else {
-      res.json({ success: false, message: "Invalid credentials" });
-    }
-  } catch (error) {
-    console.log(error);
-    res.json({ success: false, message: error.message });
+    const token = signToken(user._id);
+    return res.json({ success: true, token });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
+// 4. Send OTP for login on demand
+export const sendLoginOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await userModel.findOne({ email });
+    if (!user) return res.json({ success: false, message: "User not found" });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.otp = otp;
+    user.otpExpiry = Date.now() + OTP_EXPIRY;
+    await user.save();
+
+    await sendEmail(email, "Your OTP Login Code", `<p>Your OTP is <b>${otp}</b></p>`);
+    return res.json({ success: true, message: "OTP sent" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// 5. Google login
+export const googleLogin = async (req, res) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ success: false, message: "Missing credential" });
+    }
+
+    // ✅ Verify the token using Firebase Admin
+    const decodedToken = await admin.auth().verifyIdToken(credential);
+    
+
+    const { email, name, picture } = decodedToken;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "No email in Google account" });
+    }
+
+    // Check if user exists
+    let user = await userModel.findOne({ email });
+
+    if (!user) {
+      // Create new user
+      user = await userModel.create({
+        email,
+        name,
+        avatar: picture,
+        provider: "google",
+      });
+    }
+
+        user.loginHistory = user.loginHistory.slice(-9); // Keep last 10
+    user.loginHistory.push({
+      ip: req.ip || req.headers["x-forwarded-for"] || "unknown",
+      userAgent: req.get("User-Agent") || "unknown",
+      success: true,
+    });
+    await user.save();
+
+    // Sign your own JWT (for backend auth)
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    return res.status(200).json({
+      success: true,
+      token,
+      message: "Login successful",
+    });
+  } catch (err) {
+    console.error("🔴 Firebase login error:", err.message);
+    return res.status(500).json({ success: false, message: "Login failed" });
+  }
+};
 // API to get user profile data
 const getProfile = async (req, res) => {
   try {
     const userId = req.userId;
     const userData = await userModel.findById(userId).select("-password");
+
+    if (!userData) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
     res.json({ success: true, userData });
   } catch (error) {
@@ -98,6 +243,7 @@ const getProfile = async (req, res) => {
     res.json({ success: false, message: error.message });
   }
 };
+
 
 // API to update user profile
 const updateProfile = async (req, res) => {
@@ -208,7 +354,8 @@ const bookAppointment = async (req, res) => {
         image: doctor.image || "",
         speciality: doctor.speciality,
         fees: doctor.fees,
-        experience: doctor.experience
+        experience: doctor.experience,
+        address: doctor.address || "",
       },
     });
 
@@ -291,6 +438,60 @@ const listAppointment = async (req, res) => {
   }
 };
 
+// API to get unique doctors visited by the user
+const getVisitedDoctors = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const appointments = await appointmentModel
+      .find({ userId, cancelled: false })
+      .populate("docId");
+
+    const uniqueDoctors = new Map();
+
+    appointments.forEach((appointment) => {
+      let docId = appointment.docId?._id || appointment.docId; // Either populated object or raw ObjectId
+      docId = docId?.toString(); // Always convert to string key
+
+      if (!docId) return; // skip if null
+
+      if (!uniqueDoctors.has(docId)) {
+        if (appointment.docId && appointment.docId.name) {
+          // Use populated doc
+          const doctor = appointment.docId;
+          uniqueDoctors.set(docId, {
+            _id: doctor._id,
+            name: doctor.name,
+            speciality: doctor.speciality,
+            image: doctor.image,
+            experience: doctor.experience,
+            fees: doctor.fees,
+            address: doctor.address || "",
+          });
+        } else if (appointment.docData && appointment.docData.name) {
+          // Use stored docData backup
+          uniqueDoctors.set(docId, {
+            _id: docId,
+            name: appointment.docData.name,
+            speciality: appointment.docData.speciality,
+            image: appointment.docData.image,
+            experience: appointment.docData.experience,
+            fees: appointment.docData.fees,
+            address: appointment.docData.address,
+          });
+        }
+      }
+    });
+
+    res.json({ success: true, doctors: Array.from(uniqueDoctors.values()) });
+  } catch (error) {
+    console.error("getVisitedDoctors error:", error.message);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+
+
 
 
 
@@ -324,6 +525,9 @@ const paymentRazorpay = async (req, res) => {
     res.json({ success: false, message: error.message });
   }
 };
+
+
+
 
 // API to verify payment of razorpay
 const verifyRazorpay = async (req, res) => {
@@ -407,9 +611,85 @@ const verifyStripe = async (req, res) => {
   }
 };
 
+const handleError = (res, error, context = "Unknown") => {
+  console.error(`❌ [${context}]`, error);
+  return res.status(500).json({ success: false, message: error.message });
+};
+
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    console.log("🔐 Authenticated userId:", req.userId);
+    const user = await userModel.findById(req.userId);
+
+    if (!user) {
+      console.log("❌ User not found for ID:", req.userId);
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+
+    if (!isMatch) {
+      console.log("❌ Password mismatch for:", user.email);
+      return res.status(403).json({ success: false, message: "Incorrect current password" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return res.json({ success: true, message: "Password updated successfully" });
+  } catch (error) {
+    console.error("🔥 changePassword error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const toggleTwoFactor = async (req, res) => {
+  try {
+    const { enabled } = req.body;
+
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ success: false, message: "Invalid value for 'enabled'" });
+    }
+
+    await userModel.findByIdAndUpdate(req.userId, { twoFactorEnabled: enabled });
+    return res.json({ success: true, message: `2FA ${enabled ? "enabled" : "disabled"}` });
+  } catch (error) {
+    return handleError(res, error, "toggleTwoFactor");
+  }
+};
+
+export const getLoginHistory = async (req, res) => {
+  try {
+    const user = await userModel.findById(req.userId).select("loginHistory");
+
+    const formattedHistory = user.loginHistory.map(entry => {
+      const parser = new UAParser(entry.userAgent || "");
+      const parsedUA = parser.getResult();
+
+      return {
+        date: new Date(entry.timestamp).toLocaleString(),
+        ip: entry.ip === "::1" ? "Localhost" : entry.ip,
+        browser: `${parsedUA.browser.name || "Unknown"} ${parsedUA.browser.version || ""}`,
+        os: `${parsedUA.os.name || "Unknown"} ${parsedUA.os.version || ""}`,
+        success: entry.success,
+      };
+    });
+
+    return res.json({ success: true, history: formattedHistory });
+  } catch (error) {
+    return handleError(res, error, "getLoginHistory");
+  }
+};
+ 
 export {
-  loginUser,
-  registerUser,
+ 
+  
   getProfile,
   updateProfile,
   bookAppointment,
@@ -419,4 +699,5 @@ export {
   verifyRazorpay,
   paymentStripe,
   verifyStripe,
+  getVisitedDoctors,
 };

@@ -15,7 +15,7 @@ import streamifier from "streamifier";
 
 // Ensure you have a logo image in the correct path
 
-chromium.setHeadlessMode = true;
+chromium.setHeadlessMode = true; 
 chromium.setGraphicsMode = false;
 
 
@@ -34,7 +34,15 @@ const loginDoctor = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch) {
       const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
-      res.json({ success: true, token });
+      res.json({
+        success: true,
+        token,
+        doctor: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+        },
+      });
     } else {
       res.json({ success: false, message: "Invalid credentials" });
     }
@@ -93,19 +101,27 @@ const appointmentCancel = async (req, res) => {
     const { docId, appointmentId } = req.body;
 
     const appointmentData = await appointmentModel.findById(appointmentId);
-    if (appointmentData && appointmentData.docId === docId) {
-      await appointmentModel.findByIdAndUpdate(appointmentId, {
-        cancelled: true,
-      });
-      return res.json({ success: true, message: "Appointment Cancelled" });
+
+    if (!appointmentData) {
+      return res.json({ success: false, message: "Appointment not found" });
     }
 
-    res.json({ success: false, message: "Appointment Cancelled" });
+    if (appointmentData.docId.toString() !== docId.toString()) {
+      return res.json({ success: false, message: "Unauthorized doctor" });
+    }
+
+    // Perform the update
+    await appointmentModel.findByIdAndUpdate(appointmentId, {
+      cancelled: true,
+    });
+
+    return res.json({ success: true, message: "Appointment successfully cancelled" });
   } catch (error) {
     console.log(error);
     res.json({ success: false, message: error.message });
   }
 };
+
 
 // ✅ Mark Appointment Completed
 const appointmentComplete = async (req, res) => {
@@ -113,19 +129,26 @@ const appointmentComplete = async (req, res) => {
     const { docId, appointmentId } = req.body;
 
     const appointmentData = await appointmentModel.findById(appointmentId);
-    if (appointmentData && appointmentData.docId === docId) {
-      await appointmentModel.findByIdAndUpdate(appointmentId, {
-        isCompleted: true,
-      });
-      return res.json({ success: true, message: "Appointment Completed" });
+
+    if (!appointmentData) {
+      return res.json({ success: false, message: "Appointment not found" });
     }
 
-    res.json({ success: false, message: "Appointment Cancelled" });
+    if (appointmentData.docId.toString() !== docId.toString()) {
+      return res.json({ success: false, message: "Unauthorized doctor" }); // ✅ correct error
+    }
+
+    await appointmentModel.findByIdAndUpdate(appointmentId, {
+      isCompleted: true,
+    });
+
+    return res.json({ success: true, message: "Appointment marked as completed" });
   } catch (error) {
     console.log(error);
     res.json({ success: false, message: error.message });
   }
 };
+
 
 // ✅ Confirm Appointment (Updated to Send Email)
 const appointmentConfirm = async (req, res) => {
@@ -140,9 +163,11 @@ const appointmentConfirm = async (req, res) => {
       return res.json({ success: false, message: "Appointment not found" });
     }
 
-    if (appointment.docId.toString() !== docId) {
-      return res.json({ success: false, message: "Unauthorized doctor" });
-    }
+    if (appointment.docId.toString() !== String(docId)) {
+  console.log("🔒 Doctor ID mismatch → appointment.docId:", appointment.docId.toString(), "req.docId:", docId);
+  return res.json({ success: false, message: "Unauthorized doctor" });
+}
+
 
     await appointmentModel.findByIdAndUpdate(appointmentId, {
       confirmed: true,
@@ -500,6 +525,8 @@ const doctorDashboard = async (req, res) => {
     res.json({ success: false, message: error.message });
   }
 };
+
+
 
 // ✅ Export All
 export {

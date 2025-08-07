@@ -7,7 +7,7 @@ const storage = new CloudinaryStorage({
   cloudinary,
   params: {
     folder: 'doctor-signatures',
-    allowed_formats: ['jpg', 'jpeg', 'png'],
+    allowed_formats: ['jpg', 'jpeg', 'png','mp4', 'mov', 'avi', 'webm'],
     public_id: (req, file) => `signature-${Date.now()}-${file.originalname}`,
   },
 });
