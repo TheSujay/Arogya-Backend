@@ -1,15 +1,26 @@
 import admin from "firebase-admin";
+import dotenv from "dotenv";
 
-// Load and parse FIREBASE_CONFIG from environment
+dotenv.config();
+
 const firebaseConfig = process.env.FIREBASE_CONFIG;
 
 if (!firebaseConfig) {
   throw new Error("FIREBASE_CONFIG environment variable is missing.");
 }
 
-const serviceAccount = JSON.parse(firebaseConfig);
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(firebaseConfig);
+} catch (err) {
+  throw new Error("Invalid FIREBASE_CONFIG JSON: " + err.message);
+}
 
-// Initialize Firebase Admin SDK if not already initialized
+// Convert escaped newlines in the private key to actual newlines
+if (serviceAccount.private_key) {
+  serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+}
+
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
